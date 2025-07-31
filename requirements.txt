@@ -1,0 +1,11 @@
+langchain
+langchain-google-genai
+langchain-openai
+dotenv
+
+langgraph
+pywhatkit
+os
+pyautogui
+opencv
+google-genai
