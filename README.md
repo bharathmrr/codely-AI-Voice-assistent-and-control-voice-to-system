@@ -27,6 +27,7 @@ It’s designed to demonstrate how small, modular AI tools can replicate large-s
 vbnet
 Copy
 Edit
+
  ┌─────────────┐      ┌───────────────┐       ┌────────────┐       ┌──────────────┐
  │ Your Voice  ├─────▶ Speech-to-Text ├──────▶ LangChain    ├─────▶ LangGraph     │
  └─────────────┘      └───────────────┘       └────┬───────┘       └────┬─────────┘
@@ -151,8 +152,8 @@ Feature	Description
 bash
 Copy
 Edit
-git clone https://github.com/your-username/codely.git
-cd codely
+git clone https://github.com/bharathmrr/codely-AI-Voice-assistent-and-control-voice-to-system/tree/main.git
+cd codely-AI-Voice-assistent-and-control-voice-to-system
 pip install -r requirements.txt
 Add your OpenAI API key to config.py, then run:
 
