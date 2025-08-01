@@ -33,7 +33,7 @@ def listen_command():
 # === Gemini LLM === #
 llm = ChatGoogleGenerativeAI(
     model='gemini-2.0-flash',
-    api_key="AIzaSyDxppOA-gvXSPhdMmv3TNhfWfTjiLusrSo"
+    api_key=""
 )
 
 # === Tool: Google/Wiki search === #
