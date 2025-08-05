@@ -1,172 +1,162 @@
-from langchain.agents import Tool, AgentType, initialize_agent
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain.tools import tool
-from langgraph.graph import StateGraph, END
-
-import pywhatkit as kit
+import ollama
 import speech_recognition as sr
 import pyttsx3
-from typing import TypedDict
-from pydantic import BaseModel, Field
+import tkinter as tk
+from tkinter import scrolledtext
+import threading
+import queue
+import pywhatkit  # <-- Added
 
-# === TTS and STT === #
+# === Ollama Setup === #
+client = ollama.Client()
+model = 'gemma3:1b-it-qat'
+
+# === Text-to-Speech === #
 engine = pyttsx3.init()
-
-def ai_speck(text):
+def ai_speak(text):
     engine.say(text)
     engine.runAndWait()
 
+# === Voice Recognition === #
 def listen_command():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         print('🎤 Listening...')
-        audio = recognizer.listen(source)
+        recognizer.adjust_for_ambient_noise(source)
         try:
+            audio = recognizer.listen(source, timeout=5, phrase_time_limit=7)
             return recognizer.recognize_google(audio)
         except sr.UnknownValueError:
-            ai_speck("Sorry, I couldn't understand.")
+            ai_speak("Sorry, I couldn't understand.")
+            return "None"
         except sr.RequestError:
-            ai_speck("Service unavailable.")
+            ai_speak("Service unavailable.")
+            return "None"
+        except sr.WaitTimeoutError:
+            ai_speak("No command heard.")
+            return "None"
 
-# === Gemini LLM === #
-llm = ChatGoogleGenerativeAI(
-    model='gemini-2.0-flash',
-    api_key=""
-)
 
-# === Tool: Google/Wiki search === #
-@tool
-def search_google(query: str) -> str:
-    """Search Wikipedia or Google for the query."""
-    return kit.info(query, lines=10)
-
-# === LangChain Agent === #
-agent = initialize_agent(
-    llm=llm,
-    tools=[search_google],
-    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-    verbose=True
-)
-
-# === State for LangGraph === #
-class State(TypedDict):
-    query: str
-    operator: str
-
-# === Operator Classification Model === #
-class Operater(BaseModel):
-    agent_decs: str = Field(
-        ...,
-        description=(
-            "Classify the user query:\n"
-            "- 'youtube': play a song or video\n"
-            "- 'whatsapp': send a WhatsApp message\n"
-            "- 'google': search something\n"
-            "- 'chat': general conversation\n"
-            "- 'end': end session"
+def ask_gemma(prompt: str) -> str:
+    try:
+        system_instruction = (
+            "You are Codely, a helpful voice assistant created by Bharath. "
+            "You respond briefly and politely like Siri, using 1-2 short sentences. "
+            "Speak in a conversational tone, avoid long or technical answers unless asked. "
+            "Always stay concise and friendly."
         )
-    )
+        full_prompt = f"{system_instruction}\nUser: {prompt}\nCodely:"
+         
+        
+        response = client.generate(model=model, prompt=full_prompt)
+        return response['response'].strip()
+    except Exception as e:
+        return f"Error from LLM: {str(e)}"
 
-llm_s = llm.with_structured_output(Operater)
+# === Task Helpers === #
+def handle_google_search(query: str):
+    try:
+        search_term = query.lower().replace("search", "").replace("on google", "").strip()
+        ai_speak(f"Searching Google for {search_term}")
+        pywhatkit.search(search_term)
+    except Exception as e:
+        ai_speak(f"Failed to search: {e}")
 
-# === Step 1: Listen & Classify === #
-def listen_ai(state: State) -> State:
-    data = listen_command()
-    if not data:
-        return {"query": "None", "operator": "end"}
-    res = llm_s.invoke(data)
-    return {
-        "query": data,
-        "operator": res.agent_decs.lower()
-    }
+def handle_youtube_play(query: str):
+    try:
+        song = query.lower().replace("play", "").replace("on youtube", "").replace("open youtube", "").strip()
+        ai_speak(f"Playing {song} on YouTube")
+        pywhatkit.playonyt(song)
+    except Exception as e:
+        ai_speak(f"Failed to play video: {e}")
 
-# === Step 2: Decision Node === #
-def des_node(state: State) -> State:
-    return {
-        "query": state["query"],
-        "operator": state["operator"]
-    }
+# === Main Assistant Loop === #
+def run_gemma_chat(gui_ref):
+    while gui_ref.running:
+        user_input = listen_command()
+        if user_input == "None":
+            continue
 
-# === Step 3: General Chat === #
-def assistent_ai(state: State) -> State:
-    print('User:', state['query'])
-    response = agent.invoke(state['query'])
-    ai_speck(str(response))
-    return state
+        gui_ref.append_message(user_input, "User")
+        input_lower = user_input.lower()
 
-# === WhatsApp Messaging === #
-@tool
-def whatapp_respode_tool(message: str, number: str) -> str:
-    """Send WhatsApp message to known numbers."""
-    kit.sendwhatmsg_instantly(number, message, wait_time=10, tab_close=True)
-    return f"Sent: {message} to {number}"
+        if "play" in input_lower or "youtube" in input_lower:
+            handle_youtube_play(user_input)
+        elif "search" in input_lower or "google" in input_lower:
+            handle_google_search(user_input)
+        else:
+            response = ask_gemma(user_input)
+            gui_ref.append_message(response, "Gemma")
+            ai_speak(response)
 
-whatapp_prompt = PromptTemplate(
-    template="Send WhatsApp message: {message}\nKnown: gowtham:+919014183896, imran khan:+917032885667",
-    input_variables=['message']
-)
+        gui_ref.root.update()
 
-def whatsapp_agent(state: State) -> State:
-    chain = whatapp_prompt | llm.bind_tools([whatapp_respode_tool]) | StrOutputParser()
-    chain.invoke({'message': state['query']})
-    return state
 
-# === YouTube === #
-format_prompt = PromptTemplate(
-    template="Convert to a clean one-line search query: {user_query}",
-    input_variables=['user_query']
-)
+class VoiceAssistantGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("CODELY AI VOICE ASSISTANT")
+        self.root.geometry("600x400")
+        self.root.configure(bg="#2c3e50")
 
-def youtube_search(state: State) -> State:
-    chain = format_prompt | llm | StrOutputParser()
-    query_ = chain.invoke({'user_query': state['query']})
-    kit.playonyt(query_)
-    return state
+        self.queue = queue.Queue()
+        self.running = False
 
-# === Google Search === #
-def live_google_search(state: State) -> State:
-    chain = format_prompt | llm | StrOutputParser()
-    query_ = chain.invoke({'user_query': state['query']})
-    kit.search(query_)
-    return state
+        self.title_label = tk.Label(root, text="CODELY AI VOICE ASSISTANT", font=("Helvetica", 18, "bold"),
+                                    bg="#2c3e50", fg="#ecf0f1")
+        self.title_label.pack(pady=10)
 
-# === LangGraph Workflow === #
-workflow = StateGraph(State)
+        self.status_label = tk.Label(root, text="Status: Ready", font=("Helvetica", 12),
+                                     bg="#2c3e50", fg="#3498db")
+        self.status_label.pack(pady=5)
 
-# Nodes
-workflow.add_node('Listen.AI', listen_ai)
-workflow.add_node('Decision.AI', des_node)
-workflow.add_node('Assistant.AI', assistent_ai)
-workflow.add_node('Whatsapp.AI', whatsapp_agent)
-workflow.add_node('Youtube.AI', youtube_search)
-workflow.add_node('Google.AI', live_google_search)
+        self.conversation_area = scrolledtext.ScrolledText(
+            root, height=15, width=60, font=("Helvetica", 10),
+            bg="#34495e", fg="#ecf0f1", wrap=tk.WORD
+        )
+        self.conversation_area.pack(pady=10)
+        self.conversation_area.config(state='disabled')
 
-# Edges
-workflow.add_edge('Listen.AI', 'Decision.AI')
+        self.start_button = tk.Button(root, text="Start Listening", font=("Helvetica", 12),
+                                      bg="#3498db", fg="#ecf0f1", command=self.start_listening)
+        self.start_button.pack(pady=5)
 
-workflow.add_conditional_edges(
-    'Decision.AI',
-    lambda state: state["operator"],
-    {
-        'youtube': 'Youtube.AI',
-        'google': 'Google.AI',
-        'chat': 'Assistant.AI',
-        'whatsapp': 'Whatsapp.AI',
-        'end': END
-    }
-)
+        self.stop_button = tk.Button(root, text="Stop", font=("Helvetica", 12),
+                                     bg="#e74c3c", fg="#ecf0f1", command=self.stop_listening, state='disabled')
+        self.stop_button.pack(pady=5)
 
-workflow.add_edge('Assistant.AI', 'Listen.AI')
-workflow.add_edge('Whatsapp.AI', 'Listen.AI')
-workflow.add_edge('Youtube.AI', 'Listen.AI')
-workflow.add_edge('Google.AI', 'Listen.AI')
+    def append_message(self, message, sender="Gemma"):
+        self.conversation_area.config(state='normal')
+        self.conversation_area.insert(tk.END, f"{sender}: {message}\n")
+        self.conversation_area.see(tk.END)
+        self.conversation_area.config(state='disabled')
 
-workflow.set_entry_point('Listen.AI')
-graph = workflow.compile()
+    def update_status(self, status):
+        self.status_label.config(text=f"Status: {status}")
 
-# === Run Assistant === #
+    def start_listening(self):
+        if not self.running:
+            self.running = True
+            self.start_button.config(state='disabled')
+            self.stop_button.config(state='normal')
+            self.update_status("Listening...")
+            threading.Thread(target=run_gemma_chat, args=(self,), daemon=True).start()
+
+    def stop_listening(self):
+        self.running = False
+        self.start_button.config(state='normal')
+        self.stop_button.config(state='disabled')
+        self.update_status("Stopped")
+
+# === Main === #
 if __name__ == "__main__":
-    print("🎙️ Codely Voice Assistant started. Say something!")
-    graph.invoke({})
+    def custom_print(*args, **kwargs):
+        msg = " ".join(map(str, args))
+        gui.append_message(msg, "System")
+
+    import builtins
+    builtins.print = custom_print
+
+    root = tk.Tk()
+    gui = VoiceAssistantGUI(root)
+    root.mainloop()

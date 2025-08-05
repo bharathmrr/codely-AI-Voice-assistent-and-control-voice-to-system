@@ -1,26 +1,20 @@
-import speech_recognition as sr
 import pyttsx3
-engine=pyttsx3.init()
+import speech_recognition as sr
+
+engine = pyttsx3.init()
 
 def ai_speck(text):
     engine.say(text)
     engine.runAndWait()
 
-
 def listen_command():
-    
-    recongzer=sr.Recognizer()
+    recognizer = sr.Recognizer()
     with sr.Microphone() as source:
-        print('listening')
-        audio=recongzer.listen(source)
+        print('🎤 Listening...')
+        audio = recognizer.listen(source)
         try:
-            return recongzer.recognize_google(audio)
+            return recognizer.recognize_google(audio)
         except sr.UnknownValueError:
-            ai_speck("sorry i can't listen any thing")
-        
+            ai_speck("Sorry, I couldn't understand.")
         except sr.RequestError:
-            ai_speck("unable to avaliable now")
-
-
-
-    
+            ai_speck("Service unavailable.")
